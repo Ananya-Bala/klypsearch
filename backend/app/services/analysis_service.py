@@ -25,6 +25,7 @@ Multi-tenancy:
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
@@ -33,9 +34,16 @@ from app.core.config import settings
 from app.models.research_report import ResearchReport, ReportStatus
 from app.schemas.research_report import ReportOutput, ReportPublic
 from app.services.ai_research_service import AIResearchError, generate_research_report
+from app.services.document_service import (
+    format_document_context,
+    retrieve_context_for_research,
+)
 from app.services.market_data_service import MarketSnapshot, fetch_market_data
 from app.services.news_service import fetch_news
+from app.services.risk_service import RiskSnapshot, calculate_risk_metrics
+from app.services.scenario_service import generate_scenarios
 from app.services.sentiment_service import analyze_news_sentiment
+from app.services.technical_analysis_service import calculate_technical_analysis
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +53,59 @@ class AnalysisError(Exception):
         self.message = message
         self.status_code = status_code
         super().__init__(message)
+
+
+# ── Ticker normalisation ───────────────────────────────────────────────────────
+
+_TICKER_STOP_WORDS = {
+    "analysis",
+    "analyze",
+    "research",
+    "report",
+    "stock",
+    "company",
+}
+
+
+def _normalise_ticker_input(raw: str) -> str:
+    """
+    Normalise a potentially noisy ticker input from the UI into a clean symbol.
+
+    Behaviour:
+        - Uppercase
+        - Trim whitespace
+        - Drop filler words like "analysis", "research", "stock", etc.
+        - If multiple words remain, use the first ticker-like token.
+    """
+    text = (raw or "").strip()
+    logger.info("research.ticker_extraction raw_input=%r", text)
+
+    if not text:
+        return text
+
+    tokens = re.split(r"\s+", text)
+    cleaned_tokens: list[str] = []
+
+    for tok in tokens:
+        # Keep only alphabetic characters for the ticker candidate
+        base = re.sub(r"[^A-Za-z]", "", tok)
+        if not base:
+            continue
+
+        if base.lower() in _TICKER_STOP_WORDS:
+            continue
+
+        cleaned_tokens.append(base)
+
+    if not cleaned_tokens:
+        ticker = text.strip().upper()
+        logger.info("research.ticker_extraction extracted_ticker=%s", ticker)
+        return ticker
+
+    # If multiple words remain, use the first valid ticker-like token
+    ticker = cleaned_tokens[0].upper()
+    logger.info("research.ticker_extraction extracted_ticker=%s", ticker)
+    return ticker
 
 
 # ── Cache helpers ─────────────────────────────────────────────────────────────
@@ -110,7 +171,7 @@ def run_analysis(
         - Persists a FAILED record to the DB for audit
         - Re-raises as AnalysisError so the route returns a clean HTTP error
     """
-    ticker_upper = ticker.strip().upper()
+    ticker_upper = _normalise_ticker_input(ticker)
 
     # ── Step 0: Cache check ───────────────────────────────────────────────────
     if not force_refresh:
@@ -146,7 +207,9 @@ def run_analysis(
         try:
             snap: MarketSnapshot = fetch_market_data(ticker_upper)
         except ValueError as exc:
-            raise AnalysisError(str(exc), status_code=404)
+            msg = str(exc)
+            status_code = 503 if "rate limit" in msg.lower() else 404
+            raise AnalysisError(msg, status_code=status_code)
 
         # Update company name on the pending record
         pending.company_name = snap.company_name
@@ -155,10 +218,50 @@ def run_analysis(
         # ── Step 2: News ──────────────────────────────────────────────────────
         logger.info("Fetching news for %s", ticker_upper)
         articles = fetch_news(ticker_upper, snap.company_name)
+        logger.warning(
+            "news.pipeline ticker=%s stage=analysis_service fetched_articles=%d first_3_titles=%s",
+            ticker_upper,
+            len(articles),
+            [a.title for a in articles[:3]],
+        )
 
         # ── Step 3: Sentiment ─────────────────────────────────────────────────
         logger.info("Computing sentiment for %s (%d articles)", ticker_upper, len(articles))
         sentiment = analyze_news_sentiment(articles)
+        logger.warning(
+            "news.pipeline ticker=%s stage=analysis_service sentiment_score=%.4f sentiment_label=%s sentiment_articles=%d",
+            ticker_upper,
+            sentiment.overall_score,
+            sentiment.overall_label,
+            len(sentiment.articles),
+        )
+
+        # ── Step 3B: Risk metrics ───────────────────────────────────────────
+        logger.info("Computing risk metrics for %s", ticker_upper)
+        risk: RiskSnapshot = calculate_risk_metrics(ticker_upper)
+
+        # ── Step 3B: Technical analysis + scenarios ───────────────────────────
+        logger.info("Computing technicals and scenarios for %s", ticker_upper)
+        technical = calculate_technical_analysis(ticker_upper)
+        scenarios = generate_scenarios(snap, sentiment, technical, risk)
+
+        # ── Step 3C: Document knowledge base retrieval ────────────────────────
+        logger.info("Retrieving document context for %s", ticker_upper)
+        doc_results = retrieve_context_for_research(ticker_upper, snap.company_name)
+        document_context = format_document_context(doc_results)
+        sources = []
+        for r in doc_results:
+            if isinstance(r, dict):
+                sources.append(r.get("source"))
+            else:
+                sources.append(getattr(r, "source", None))
+        logger.info(
+            "documents.pipeline ticker=%s injected_chunks=%d context_chars=%d sources=%s",
+            ticker_upper,
+            len(doc_results),
+            len(document_context),
+            sources,
+        )
 
         # ── Step 4: AI report generation ──────────────────────────────────────
         logger.info("Generating AI report for %s", ticker_upper)
@@ -169,6 +272,10 @@ def run_analysis(
                 snap=snap,
                 sentiment=sentiment,
                 generated_at=generated_at,
+                technical=technical,
+                risk=risk,
+                scenarios=scenarios,
+                document_context=document_context,
             )
         except AIResearchError as exc:
             raise AnalysisError(exc.message, status_code=exc.status_code)

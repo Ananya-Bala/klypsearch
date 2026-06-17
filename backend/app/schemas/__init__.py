@@ -21,6 +21,14 @@ from app.schemas.research_report import (
     AIReport,
 )
 
+# Phase 3C
+from app.schemas.document import (
+    DocumentSearchRequest,
+    DocumentSearchResult,
+    DocumentSearchResponse,
+    IngestStats,
+)
+
 __all__ = [
     # Phase 1
     "SignupRequest", "LoginRequest", "TokenResponse", "UserPublic",
@@ -35,4 +43,7 @@ __all__ = [
     "ExecutiveSummary", "FundamentalData", "TechnicalData",
     "NewsSentiment", "AnalystConsensus", "ScenarioAnalysis",
     "RiskAnalysis", "TimingAnalysis", "AIReport",
+    # Phase 3C
+    "DocumentSearchRequest", "DocumentSearchResult",
+    "DocumentSearchResponse", "IngestStats",
 ]

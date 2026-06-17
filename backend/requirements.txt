@@ -16,6 +16,9 @@ psycopg2-binary==2.9.10
 # ─────────────────────────────────────────────────────────────────────────────
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
+# bcrypt 4.x removed attributes passlib 1.7.4 expects (e.g. bcrypt.__about__),
+# and can break passlib's bcrypt backend checks. Pin to a compatible release.
+bcrypt==3.2.2
 python-multipart==0.0.12
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -34,8 +37,9 @@ python-dotenv==1.0.1
 # Phase 3A: AI Research Engine
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Market data — no API key required
-yfinance==0.2.54
+# Market data — no API key required (1.x uses curl_cffi to avoid Yahoo rate limits)
+yfinance>=1.4.1
+curl_cffi>=0.7.0
 
 groq>=0.30.0
 
@@ -46,4 +50,20 @@ httpx==0.28.1
 textblob==0.18.0.post0
 
 # Numerical computing for RSI / SMA calculation
-numpy==2.0.2
+# 2.0.x has no Python 3.13 wheels on macOS ARM — pip falls back to a source build that fails.
+numpy>=2.1.0,<3
+pandas>=2.2.0
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 3C: Document Knowledge Base (RAG)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Persistent vector store for document chunks
+chromadb>=0.5.0
+
+# Free, local embedding model (sentence-transformers/all-MiniLM-L6-v2).
+# No API key required — runs on CPU.
+sentence-transformers>=3.0.0
+
+# PDF ingestion support
+pypdf>=4.2.0

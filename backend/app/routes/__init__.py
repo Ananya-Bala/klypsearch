@@ -8,6 +8,12 @@ from app.routes.admin import router as admin_router
 # Phase 3A
 from app.routes.analyze import router as analyze_router
 
+# Phase 3C
+from app.routes.documents import router as documents_router
+
+# Chat
+from app.routes.chat import router as chat_router
+
 __all__ = [
     "auth_router",
     "organization_router",
@@ -16,4 +22,6 @@ __all__ = [
     "watchlist_router",
     "admin_router",
     "analyze_router",
+    "documents_router",
+    "chat_router",
 ]

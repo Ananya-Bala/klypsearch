@@ -26,12 +26,31 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+_CURRENCY_SYMBOLS: dict[str, str] = {
+    "USD": "$",
+    "INR": "₹",
+    "EUR": "€",
+    "GBP": "£",
+}
+
+
+def currency_symbol(currency_code: str | None) -> str:
+    """
+    Map currency codes to display symbols.
+    Defaults to the currency code itself if unknown, and empty string if None.
+    """
+    if not currency_code:
+        return ""
+    code = currency_code.upper()
+    return _CURRENCY_SYMBOLS.get(code, code)
+
 
 @dataclass
 class MarketSnapshot:
     """Typed container for all market + technical data."""
     ticker: str
     company_name: str | None = None
+    currency: str | None = None  # e.g. "USD", "INR"
 
     # ── Fundamentals ─────────────────────────────────────────────────────────
     current_price: float | None = None
@@ -137,28 +156,41 @@ def _volume_trend(volumes: list[float]) -> str:
     return "neutral"
 
 
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """Detect Yahoo Finance throttling (YFRateLimitError or similar)."""
+    name = type(exc).__name__
+    if name == "YFRateLimitError":
+        return True
+    return "rate limit" in str(exc).lower()
+
+
 def fetch_market_data(ticker: str) -> MarketSnapshot:
     """
     Main entry point. Fetches fundamentals + computes technicals for `ticker`.
 
-    Raises ValueError if the ticker is completely unknown (no price data at all).
-    All other errors are caught per-field and logged — the pipeline continues
+    Raises ValueError if the ticker is unknown or Yahoo Finance is rate-limiting.
+    All other per-field errors are caught and logged — the pipeline continues
     with partial data.
     """
     import yfinance as yf  # imported here so the module loads without network
 
     ticker_upper = ticker.strip().upper()
     snap = MarketSnapshot(ticker=ticker_upper)
+    rate_limited = False
+    t = yf.Ticker(ticker_upper)
 
+    # ── Quote / fundamentals (separate from history so one failure doesn't block the other)
     try:
-        t = yf.Ticker(ticker_upper)
         info: dict[str, Any] = t.info or {}
         snap.raw_info = info
 
-        # ── Company identity ──────────────────────────────────────────────────
         snap.company_name = info.get("longName") or info.get("shortName")
+        snap.currency = (
+            info.get("currency")
+            or info.get("financialCurrency")
+            or info.get("priceCurrency")
+        )
 
-        # ── Fundamentals ──────────────────────────────────────────────────────
         snap.current_price = _safe_float(
             info.get("currentPrice") or info.get("regularMarketPrice")
         )
@@ -171,47 +203,52 @@ def fetch_market_data(ticker: str) -> MarketSnapshot:
         snap.debt_to_equity   = _safe_float(info.get("debtToEquity"))
         snap.profit_margins   = _safe_float(info.get("profitMargins"))
 
-        # ── Analyst consensus ─────────────────────────────────────────────────
-        snap.strong_buy       = _safe_int(info.get("strongBuyRatings"))
-        snap.buy              = _safe_int(info.get("buyRatings"))
-        snap.hold             = _safe_int(info.get("holdRatings"))
-        snap.sell             = _safe_int(info.get("sellRatings"))
-        snap.strong_sell      = _safe_int(info.get("strongSellRatings"))
+        snap.strong_buy        = _safe_int(info.get("strongBuyRatings"))
+        snap.buy               = _safe_int(info.get("buyRatings"))
+        snap.hold              = _safe_int(info.get("holdRatings"))
+        snap.sell              = _safe_int(info.get("sellRatings"))
+        snap.strong_sell       = _safe_int(info.get("strongSellRatings"))
         snap.mean_target_price = _safe_float(info.get("targetMeanPrice"))
+    except Exception as exc:
+        if _is_rate_limit_error(exc):
+            rate_limited = True
+        logger.warning("Failed to fetch quote info for %s: %s", ticker_upper, exc)
 
-        # ── Historical prices for technicals ──────────────────────────────────
+    # ── Historical prices for technicals ──────────────────────────────────────
+    try:
         hist = t.history(period="1y")
 
         if hist.empty:
             logger.warning("No price history for %s", ticker_upper)
-            return snap
+        else:
+            closes  = hist["Close"].tolist()
+            volumes = hist["Volume"].tolist()
 
-        closes  = hist["Close"].tolist()
-        volumes = hist["Volume"].tolist()
+            if snap.current_price is None and closes:
+                snap.current_price = _safe_float(closes[-1])
 
-        # SMA 50 / 200
-        if len(closes) >= 50:
-            snap.sma_50 = round(float(np.mean(closes[-50:])), 4)
-        if len(closes) >= 200:
-            snap.sma_200 = round(float(np.mean(closes[-200:])), 4)
+            if len(closes) >= 50:
+                snap.sma_50 = round(float(np.mean(closes[-50:])), 4)
+            if len(closes) >= 200:
+                snap.sma_200 = round(float(np.mean(closes[-200:])), 4)
 
-        # Golden / Death cross
-        if snap.sma_50 is not None and snap.sma_200 is not None:
-            snap.golden_cross = snap.sma_50 > snap.sma_200
-            snap.death_cross  = snap.sma_50 < snap.sma_200
+            if snap.sma_50 is not None and snap.sma_200 is not None:
+                snap.golden_cross = snap.sma_50 > snap.sma_200
+                snap.death_cross  = snap.sma_50 < snap.sma_200
 
-        # RSI (14-period)
-        snap.rsi = _compute_rsi(closes)
-
-        # Volume trend
-        snap.volume_trend = _volume_trend(volumes)
-
+            snap.rsi = _compute_rsi(closes)
+            snap.volume_trend = _volume_trend(volumes)
     except Exception as exc:
-        # Non-fatal — return whatever we managed to collect
-        logger.error("market_data_service error for %s: %s", ticker_upper, exc, exc_info=True)
+        if _is_rate_limit_error(exc):
+            rate_limited = True
+        logger.warning("Failed to fetch price history for %s: %s", ticker_upper, exc)
 
-    # Validate we got at least a price; if not the ticker is bogus
-    if snap.current_price is None and not snap.raw_info:
-        raise ValueError(f"No data found for ticker '{ticker_upper}'. Is it a valid symbol?")
+    if snap.current_price is not None:
+        return snap
 
-    return snap
+    if rate_limited:
+        raise ValueError(
+            "Yahoo Finance rate limit reached. Please wait a moment and try again."
+        )
+
+    raise ValueError(f"No data found for ticker '{ticker_upper}'. Is it a valid symbol?")

@@ -47,12 +47,16 @@ def fetch_news(ticker: str, company_name: str | None = None) -> list[RawArticle]
 
     Returns an empty list (never raises) on any error.
     """
+    ticker_upper = ticker.strip().upper()
     if not settings.NEWS_API_KEY:
-        logger.info("NEWS_API_KEY not set — skipping news fetch for %s", ticker)
+        logger.warning(
+            "news.fetch ticker=%s provider=newsapi status=skipped reason=missing_api_key",
+            ticker_upper,
+        )
         return []
 
     # Build query string: ticker + optional company name
-    query_parts = [ticker]
+    query_parts = [ticker_upper]
     if company_name:
         # Use first word of company name to avoid too-narrow results
         short_name = company_name.split()[0]
@@ -70,10 +74,20 @@ def fetch_news(ticker: str, company_name: str | None = None) -> list[RawArticle]
     }
 
     try:
+        logger.info(
+            "news.fetch ticker=%s provider=newsapi request_query=%s",
+            ticker_upper,
+            query,
+        )
         response = httpx.get(
             f"{settings.NEWS_API_BASE_URL}/everything",
             params=params,
             timeout=_TIMEOUT,
+        )
+        logger.info(
+            "news.fetch ticker=%s provider=newsapi response_status=%s",
+            ticker_upper,
+            response.status_code,
         )
         response.raise_for_status()
         data = response.json()
@@ -93,14 +107,30 @@ def fetch_news(ticker: str, company_name: str | None = None) -> list[RawArticle]
                 )
             )
 
-        logger.info("Fetched %d articles for %s", len(articles), ticker)
+        preview_titles = [a.title for a in articles[:3]]
+        logger.info(
+            "news.fetch ticker=%s provider=newsapi articles_returned=%d first_3_titles=%s",
+            ticker_upper,
+            len(articles),
+            preview_titles,
+        )
         return articles
 
     except httpx.TimeoutException:
-        logger.warning("News API timeout for %s", ticker)
+        logger.warning("news.fetch ticker=%s provider=newsapi status=timeout", ticker_upper)
     except httpx.HTTPStatusError as exc:
-        logger.warning("News API HTTP %s for %s: %s", exc.response.status_code, ticker, exc)
+        logger.warning(
+            "news.fetch ticker=%s provider=newsapi status=http_error response_status=%s error=%s",
+            ticker_upper,
+            exc.response.status_code,
+            exc,
+        )
     except Exception as exc:
-        logger.error("News fetch error for %s: %s", ticker, exc, exc_info=True)
+        logger.error(
+            "news.fetch ticker=%s provider=newsapi status=error error=%s",
+            ticker_upper,
+            exc,
+            exc_info=True,
+        )
 
     return []

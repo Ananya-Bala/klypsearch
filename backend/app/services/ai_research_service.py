@@ -57,17 +57,16 @@ from app.schemas.research_report import (
     NewsItem,
     NewsSentiment,
     PriceTarget,
-    ScenarioAnalysis,
-    ScenarioCase,
     ReportOutput,
     RiskAnalysis,
     RiskItem,
+    RiskMetrics,
     ScenarioAnalysis,
     ScenarioCase,
     TechnicalData,
     TimingAnalysis,
 )
-from app.services.market_data_service import MarketSnapshot
+from app.services.market_data_service import MarketSnapshot, currency_symbol
 from app.services.risk_service import RiskSnapshot
 from app.services.scenario_service import ScenarioSnapshot
 from app.services.sentiment_service import AggregatedSentiment
@@ -149,19 +148,22 @@ def _build_user_prompt(
     technical: TechnicalSnapshot | None = None,
     risk: RiskSnapshot | None = None,
     scenarios: ScenarioSnapshot | None = None,
+    document_context: str | None = None,
 ) -> str:
     """
     Assemble all five signal blocks into a single structured prompt.
     Each block is clearly labelled so the model can reason across them.
     """
 
+    sym = currency_symbol(getattr(snap, "currency", None))
+
     # ── Block 1: Fundamentals ─────────────────────────────────────────────────
     fundamentals_block = f"""=== FUNDAMENTAL DATA ===
-Current Price:    {_fmt(snap.current_price, '$')}
+Current Price:    {_fmt(snap.current_price, sym)}
 Market Cap:       {_fmt(snap.market_cap)}
 Trailing P/E:     {_fmt(snap.pe_ratio, 'x')}
 Forward P/E:      {_fmt(snap.forward_pe, 'x')}
-EPS (TTM):        {_fmt(snap.eps, '$')}
+EPS (TTM):        {_fmt(snap.eps, sym)}
 Revenue Growth:   {_pct(snap.revenue_growth)}
 Free Cash Flow:   {_fmt(snap.free_cash_flow)}
 Debt/Equity:      {_fmt(snap.debt_to_equity)}
@@ -198,8 +200,8 @@ Profit Margin:    {_pct(snap.profit_margins)}"""
 RSI (14):         {rsi_label}
 MACD:             {macd_label}
 MACD Histogram:   {_fmt(technical.macd_histogram)}
-SMA 50:           {_fmt(technical.sma_50, '$')}
-SMA 200:          {_fmt(technical.sma_200, '$')}
+SMA 50:           {_fmt(technical.sma_50, sym)}
+SMA 200:          {_fmt(technical.sma_200, sym)}
 MA Cross:         {cross_label}
 Volume Ratio:     {vol_ratio_label}
 Trend:            {technical.trend}"""
@@ -211,8 +213,8 @@ Trend:            {technical.trend}"""
         )
         technical_block = f"""=== TECHNICAL ANALYSIS ===
 RSI (14):         {rsi_label}
-SMA 50:           {_fmt(snap.sma_50, '$')}
-SMA 200:          {_fmt(snap.sma_200, '$')}
+SMA 50:           {_fmt(snap.sma_50, sym)}
+SMA 200:          {_fmt(snap.sma_200, sym)}
 Volume Trend:     {snap.volume_trend or 'N/A'}
 Golden Cross:     {snap.golden_cross}"""
 
@@ -230,10 +232,10 @@ Risk Level:            {risk.risk_level}"""
     # ── Block 4: Scenario Analysis ────────────────────────────────────────────
     if scenarios and scenarios.bull and scenarios.base and scenarios.bear:
         scenario_block = f"""=== QUANTITATIVE SCENARIO ANALYSIS ===
-Current Price: {_fmt(scenarios.current_price, '$')}
-Bull Case:  ${scenarios.bull.target:.2f}  (+{scenarios.bull.upside_pct:.1f}%)  — probability: {scenarios.bull.probability}%
-Base Case:  ${scenarios.base.target:.2f}  ({scenarios.base.upside_pct:+.1f}%)  — probability: {scenarios.base.probability}%
-Bear Case:  ${scenarios.bear.target:.2f}  ({scenarios.bear.upside_pct:+.1f}%)  — probability: {scenarios.bear.probability}%
+Current Price: {_fmt(scenarios.current_price, sym)}
+Bull Case:  {sym}{scenarios.bull.target:.2f}  (+{scenarios.bull.upside_pct:.1f}%)  — probability: {scenarios.bull.probability}%
+Base Case:  {sym}{scenarios.base.target:.2f}  ({scenarios.base.upside_pct:+.1f}%)  — probability: {scenarios.base.probability}%
+Bear Case:  {sym}{scenarios.bear.target:.2f}  ({scenarios.bear.upside_pct:+.1f}%)  — probability: {scenarios.bear.probability}%
 Note: Probabilities are quantitatively derived from volatility, momentum, and sentiment signals."""
     else:
         scenario_block = "=== QUANTITATIVE SCENARIO ANALYSIS ===\nNot available."
@@ -257,7 +259,9 @@ Recent Headlines:
 === ANALYST CONSENSUS ===
 Strong Buy: {snap.strong_buy} | Buy: {snap.buy} | Hold: {snap.hold} | Sell: {snap.sell} | Strong Sell: {snap.strong_sell}
 Total Ratings: {total_ratings}
-Mean Price Target: {_fmt(snap.mean_target_price, '$')}"""
+Mean Price Target: {_fmt(snap.mean_target_price, sym)}"""
+
+    document_block = (document_context or "").strip()
 
     # ── Assembled prompt ──────────────────────────────────────────────────────
     prompt = f"""Analyze {snap.ticker} ({snap.company_name or 'Unknown Company'}) using ALL signals below.
@@ -271,10 +275,11 @@ Mean Price Target: {_fmt(snap.mean_target_price, '$')}"""
 {scenario_block}
 
 {sentiment_block}
-
+{(chr(10) + document_block + chr(10)) if document_block else ""}
 === YOUR TASK ===
 Synthesize ALL the signals above into a single institutional research report.
 Do not simply list the data — reason across the signals, explain conflicts, and produce a unified investment thesis.
+When DOCUMENT_CONTEXT excerpts are provided, use them as supporting qualitative evidence (e.g. management commentary, segment detail) but never invent figures beyond the quantitative data blocks.
 
 Apply these rules strictly:
 - If RSI > 70: mention overbought conditions in technicals interpretation
@@ -352,6 +357,31 @@ Respond with ONLY this JSON object. No markdown. No preamble.
 
 # ── Response parser ───────────────────────────────────────────────────────────
 
+def _safe_target_price(value: Any, fallback: float | None) -> float:
+    """Coerce AI scenario target_price; fall back to quant/current price."""
+    if value is not None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            pass
+    if fallback is not None:
+        return float(fallback)
+    return 0.0
+
+
+def _build_scenario_case(
+    raw: dict | None,
+    quant_target: float | None,
+    current_price: float | None,
+    default_narrative: str = "Scenario analysis not available.",
+) -> ScenarioCase:
+    """AI supplies narrative; numeric target comes from quant scenarios when available."""
+    raw = raw or {}
+    target = _safe_target_price(raw.get("target_price"), quant_target or current_price)
+    narrative = raw.get("narrative") or default_narrative
+    return ScenarioCase(target_price=target, narrative=narrative)
+
+
 def _parse_ai_response(
     raw_json: str,
     snap: MarketSnapshot,
@@ -375,14 +405,19 @@ def _parse_ai_response(
 
     # ── Normalise scenario probabilities ──────────────────────────────────────
     sa = data.get("scenario_analysis", {})
-    bull_p = int(sa.get("bull_probability", 30))
-    base_p = int(sa.get("base_probability", 50))
-    bear_p = int(sa.get("bear_probability", 20))
-    total  = bull_p + base_p + bear_p
-    if total != 100 and total > 0:
-        bull_p = round(bull_p * 100 / total)
-        base_p = round(base_p * 100 / total)
-        bear_p = 100 - bull_p - base_p
+    if scenarios and scenarios.bull and scenarios.base and scenarios.bear:
+        bull_p = scenarios.bull.probability
+        base_p = scenarios.base.probability
+        bear_p = scenarios.bear.probability
+    else:
+        bull_p = int(sa.get("bull_probability", 30))
+        base_p = int(sa.get("base_probability", 50))
+        bear_p = int(sa.get("bear_probability", 20))
+        total  = bull_p + base_p + bear_p
+        if total != 100 and total > 0:
+            bull_p = round(bull_p * 100 / total)
+            base_p = round(base_p * 100 / total)
+            bear_p = 100 - bull_p - base_p
 
     # ── Executive summary ─────────────────────────────────────────────────────
     es = data.get("executive_summary", {})
@@ -414,71 +449,19 @@ def _parse_ai_response(
         interpretation=fd.get("interpretation", "Fundamental analysis not available."),
     )
 
-    # ── Phase 3A TechnicalData (backward-compat, uses MarketSnapshot) ─────────
+    # ── TechnicalData (prefer Phase 3B snapshot when available) ─────────────
     td = data.get("technicals", {})
     technicals = TechnicalData(
-        sma_50=snap.sma_50,
-        sma_200=snap.sma_200,
-        rsi=snap.rsi,
+        sma_50=technical.sma_50 if technical else snap.sma_50,
+        sma_200=technical.sma_200 if technical else snap.sma_200,
+        rsi=technical.rsi if technical else snap.rsi,
         volume_trend=snap.volume_trend,
-        golden_cross=snap.golden_cross,
-        death_cross=snap.death_cross,
-        overbought=(snap.rsi or 0) > 70,
-        oversold=(snap.rsi or 100) < 30,
+        golden_cross=technical.golden_cross if technical else snap.golden_cross,
+        death_cross=technical.death_cross if technical else snap.death_cross,
+        overbought=technical.overbought if technical else (snap.rsi or 0) > 70,
+        oversold=technical.oversold if technical else (snap.rsi or 100) < 30,
         interpretation=td.get("interpretation", "Technical analysis not available."),
     )
-
-    # ── Phase 3B TechnicalIndicators (richer, from technical_analysis_service) ─
-    tech_indicators: TechnicalIndicators | None = None
-    if technical:
-        tech_indicators = TechnicalIndicators(
-            rsi=technical.rsi,
-            overbought=technical.overbought,
-            oversold=technical.oversold,
-            macd=technical.macd,
-            macd_signal=technical.macd_signal,
-            macd_histogram=technical.macd_histogram,
-            macd_bullish=technical.macd_bullish,
-            sma_50=technical.sma_50,
-            sma_200=technical.sma_200,
-            golden_cross=technical.golden_cross,
-            death_cross=technical.death_cross,
-            volume_ratio=technical.volume_ratio,
-            trend=technical.trend,
-        )
-
-    # # ── Phase 3B RiskMetrics ──────────────────────────────────────────────────
-    # risk_metrics_schema: RiskMetrics | None = None
-    # if risk:
-    #     risk_metrics_schema = RiskMetrics(
-    #         volatility=risk.volatility,
-    #         max_drawdown=risk.max_drawdown,
-    #         sharpe_ratio=risk.sharpe_ratio,
-    #         beta=risk.beta,
-    #         risk_level=risk.risk_level,
-    #     )
-
-    # ── Phase 3B ScenarioAnalysis ───────────────────────────────────────
-    quant_scenarios_schema: ScenarioAnalysis | None = None
-    if scenarios and scenarios.bull and scenarios.base and scenarios.bear:
-        quant_scenarios_schema = ScenarioAnalysis(
-            current_price=scenarios.current_price,
-            bull=ScenarioCase(
-                target=scenarios.bull.target,
-                probability=scenarios.bull.probability,
-                upside_pct=scenarios.bull.upside_pct,
-            ),
-            base=ScenarioCase(
-                target=scenarios.base.target,
-                probability=scenarios.base.probability,
-                upside_pct=scenarios.base.upside_pct,
-            ),
-            bear=ScenarioCase(
-                target=scenarios.bear.target,
-                probability=scenarios.bear.probability,
-                upside_pct=scenarios.bear.upside_pct,
-            ),
-        )
 
     # ── News sentiment ────────────────────────────────────────────────────────
     news_sentiment = NewsSentiment(
@@ -497,6 +480,13 @@ def _parse_ai_response(
         top_positive_drivers=sentiment.top_positive_drivers,
         top_negative_drivers=sentiment.top_negative_drivers,
     )
+    logger.warning(
+        "news.pipeline ticker=%s stage=ai_research_service report_news_sentiment score=%.4f label=%s articles=%d",
+        snap.ticker,
+        news_sentiment.overall_score,
+        news_sentiment.overall_label,
+        len(news_sentiment.articles),
+    )
 
     # ── Analyst consensus ─────────────────────────────────────────────────────
     ac = data.get("analyst_consensus", {})
@@ -510,11 +500,15 @@ def _parse_ai_response(
         summary=ac.get("summary", "No analyst consensus data available."),
     )
 
-    # ── Phase 3A ScenarioAnalysis (AI narratives, uses quant targets) ─────────
+    # ── Phase 3A ScenarioAnalysis (AI narratives, quant targets) ────────────
+    bull_target = scenarios.bull.target if scenarios and scenarios.bull else None
+    base_target = scenarios.base.target if scenarios and scenarios.base else None
+    bear_target = scenarios.bear.target if scenarios and scenarios.bear else None
+
     scenario_analysis = ScenarioAnalysis(
-        bull_case=ScenarioCase(**sa.get("bull_case", {"target_price": 0, "narrative": "N/A"})),
-        base_case=ScenarioCase(**sa.get("base_case", {"target_price": 0, "narrative": "N/A"})),
-        bear_case=ScenarioCase(**sa.get("bear_case", {"target_price": 0, "narrative": "N/A"})),
+        bull_case=_build_scenario_case(sa.get("bull_case"), bull_target, snap.current_price),
+        base_case=_build_scenario_case(sa.get("base_case"), base_target, snap.current_price),
+        bear_case=_build_scenario_case(sa.get("bear_case"), bear_target, snap.current_price),
         bull_probability=bull_p,
         base_probability=base_p,
         bear_probability=bear_p,
@@ -532,6 +526,17 @@ def _parse_ai_response(
             for r in ra.get("risks", [])
         ]
     )
+
+    # ── Risk metrics (quantitative, from risk_service) ────────────────────────
+    risk_metrics: RiskMetrics | None = None
+    if risk:
+        risk_metrics = RiskMetrics(
+            volatility=risk.volatility,
+            max_drawdown=risk.max_drawdown,
+            sharpe_ratio=risk.sharpe_ratio,
+            beta=risk.beta,
+            risk_level=risk.risk_level,
+        )
 
     # ── Timing analysis ───────────────────────────────────────────────────────
     ta = data.get("timing_analysis", {})
@@ -562,12 +567,9 @@ def _parse_ai_response(
         analyst_consensus=analyst_consensus,
         scenario_analysis=scenario_analysis,
         risk_analysis=risk_analysis,
+        risk_metrics=risk_metrics,
         timing_analysis=timing_analysis,
         ai_report=ai_report,
-        # Phase 3B
-        # technical_indicators=tech_indicators,
-        # risk_metrics=risk_metrics_schema,
-        scenarios=scenarios_schema,
     )
 
 
@@ -580,6 +582,7 @@ def generate_research_report(
     technical: TechnicalSnapshot | None = None,
     risk: RiskSnapshot | None = None,
     scenarios: ScenarioSnapshot | None = None,
+    document_context: str | None = None,
 ) -> tuple[ReportOutput, int, int]:
     """
     Call Groq and return (ReportOutput, prompt_tokens, completion_tokens).
@@ -587,6 +590,10 @@ def generate_research_report(
     Phase 3B: accepts three new optional parameters (technical, risk, scenarios).
     If they are None the prompt falls back to Phase 3A behaviour — full backward
     compatibility is maintained.
+
+    Phase 3C: accepts an optional ``document_context`` string (a pre-formatted
+    DOCUMENT_CONTEXT block retrieved from the knowledge base). When None or
+    empty, the prompt is identical to the Phase 3B prompt.
     """
     if not settings.GROQ_API_KEY:
         raise AIResearchError(
@@ -597,7 +604,7 @@ def generate_research_report(
     client = Groq(api_key=settings.GROQ_API_KEY)
 
     system_prompt = _build_system_prompt()
-    user_prompt   = _build_user_prompt(snap, sentiment, technical, risk, scenarios)
+    user_prompt   = _build_user_prompt(snap, sentiment, technical, risk, scenarios, document_context)
 
     logger.info(
         "Calling Groq %s for %s (prompt ~%d chars)",

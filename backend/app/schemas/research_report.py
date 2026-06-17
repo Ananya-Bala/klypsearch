@@ -15,6 +15,7 @@ Schema hierarchy:
     ScenarioAnalysis        → all three scenarios + probabilities
     RiskItem                → individual risk with severity
     RiskAnalysis            → collection of risks
+    RiskMetrics             → quantitative volatility / drawdown / Sharpe / beta
     TimingAnalysis          → entry timing recommendation
     AIReport                → full narrative text report
     ExecutiveSummary        → top-level recommendation block
@@ -143,6 +144,14 @@ class RiskAnalysis(BaseModel):
     risks: list[RiskItem]
 
 
+class RiskMetrics(BaseModel):
+    volatility: float | None = None       # annualised decimal, e.g. 0.31 = 31%
+    max_drawdown: float | None = None     # e.g. -18.2 means −18.2%
+    sharpe_ratio: float | None = None
+    beta: float | None = None
+    risk_level: str = "Unknown"           # Low | Moderate | High | Very High
+
+
 class TimingAnalysis(BaseModel):
     should_buy_now: bool
     reasoning: str          # paragraph explaining RSI + MA + sentiment signals
@@ -175,6 +184,7 @@ class ReportOutput(BaseModel):
     analyst_consensus: AnalystConsensus
     scenario_analysis: ScenarioAnalysis
     risk_analysis: RiskAnalysis
+    risk_metrics: RiskMetrics | None = None
     timing_analysis: TimingAnalysis
     ai_report: AIReport
 
