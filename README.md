@@ -8,31 +8,31 @@ Built for investors, analysts, students, and anyone who wants a faster way to re
 
 ## Features
 
-**Institutional research reports**
+- **Institutional research reports**
 One-click stock analysis with an AI-generated investment thesis, a conviction score, and a clear recommendation.
 
-**Market data engine**
+- **Market data engine**
 Real-time prices, market cap, revenue growth, EPS, P/E and forward P/E, and profitability metrics.
 
-**News intelligence**
+- **News intelligence**
 Aggregated company news with bullish, neutral, or bearish sentiment classification.
 
-**Risk engine**
+- **Risk engine**
 Annualized volatility, maximum drawdown, Sharpe ratio, beta versus the S&P 500, and an overall risk classification.
 
-**Technical analysis**
+- **Technical analysis**
 RSI (14), SMA 50 and SMA 200, golden cross detection, and trend/momentum signals.
 
-**Scenario modeling**
+- **Scenario modeling**
 Bull, base, and bear cases with a probability-weighted outlook.
 
-**Research assistant chat**
+- **Research assistant chat**
 Natural language queries that support multi-company comparisons and AI-synthesized answers.
 
-**Document knowledge base**
+- **Document knowledge base**
 Earnings reports and company filings indexed for Retrieval-Augmented Generation (RAG) via ChromaDB.
 
-**Authentication and workspaces**
+- **Authentication and workspaces**
 JWT authentication with multi-user support and secured API access.
 
 ## Example queries
