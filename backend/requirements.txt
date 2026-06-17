@@ -59,7 +59,7 @@ pandas>=2.2.0
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Persistent vector store for document chunks
-chromadb
+chromadb==0.5.23
 
 # Free, local embedding model (sentence-transformers/all-MiniLM-L6-v2).
 # No API key required — runs on CPU.
