@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { API_BASE_URL } from "../config";
+
 
 const css = `
   @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&family=Bebas+Neue&display=swap');
@@ -319,7 +321,7 @@ export default function Login({ onLogin, successMessage = "", onGoToSignup, onCl
     setLoading(true);
 
     try {
-      const res = await fetch("http://127.0.0.1:8000/auth/login", {
+      const res = await fetch(`${API_BASE_URL}/auth/login`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ email: email.trim(), password }),
@@ -344,7 +346,7 @@ export default function Login({ onLogin, successMessage = "", onGoToSignup, onCl
 
     } catch (err) {
       if (err.name === "TypeError") {
-        setError("Cannot reach the server. Is the backend running on port 8000?");
+        setError("Cannot reach the server. Please check your connection and ensure the backend is running.");
       } else {
         setError(err.message || "An unexpected error occurred.");
       }

@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from "react";
+import { API_BASE_URL } from "../config";
+
 
 // Transformation layer: maps backend ReportOutput to frontend UI structure
 function transformBackendReport(backendReport) {
@@ -1383,7 +1385,7 @@ export default function InvestmentTerminal() {
 
         // Start API call alongside loading animation
         const apiCall = fetch(
-          "http://127.0.0.1:8000/research/analyze",
+          `${API_BASE_URL}/research/analyze`,
           {
             method: "POST",
             headers: {
@@ -1422,7 +1424,7 @@ export default function InvestmentTerminal() {
       } else {
         // Natural language → chatbot endpoint (prevents 422 from ticker schema)
         const res = await fetch(
-          "http://127.0.0.1:8000/chat/query",
+          `${API_BASE_URL}/chat/query`,
           {
             method: "POST",
             headers: {
