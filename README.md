@@ -1,8 +1,8 @@
-# KlypSearch
+# Klysearch
 
 **AI-powered institutional research terminal**
 
-KlypSearch combines market data, news intelligence, sentiment analysis, quantitative risk modeling, technical indicators, scenario forecasting, and document retrieval into a single research workflow. It turns raw financial data into institutional-style research reports and conversational investment insights.
+Klysearch combines market data, news intelligence, sentiment analysis, quantitative risk modeling, technical indicators, scenario forecasting, and document retrieval into a single research workflow. It turns raw financial data into institutional-style research reports and conversational investment insights.
 
 Built for investors, analysts, students, and anyone who wants a faster way to research a stock.
 
@@ -112,7 +112,7 @@ Run the backend:
 python -m uvicorn app.main:app --reload
 ```
 
-The API runs at `https://klypsearch.onrender.com`, with interactive docs at `https://klypsearch.onrender.com/docs`.
+The API runs at `https://klysearch.onrender.com`, with interactive docs at `https://klysearch.onrender.com/docs`.
 
 ### Frontend
 
@@ -128,7 +128,7 @@ The app runs at `http://localhost:5173`.
 ## Project structure
 
 ```
-klypsearch/
+klysearch/
 ├── .gitignore                 # Root ignores (venv, node_modules, .env, chroma caches)
 │
 ├── backend/                   # Python API (FastAPI)
@@ -255,7 +255,7 @@ klypsearch/
 
 ## Disclaimer
 
-KlypSearch is intended for educational and research purposes only. It does not constitute financial advice, investment recommendations, or guarantees regarding future market performance. Always conduct your own research before making investment decisions.
+Klysearch is intended for educational and research purposes only. It does not constitute financial advice, investment recommendations, or guarantees regarding future market performance. Always conduct your own research before making investment decisions.
 
 ---
 

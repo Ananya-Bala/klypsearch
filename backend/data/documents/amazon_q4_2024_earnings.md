@@ -7,7 +7,7 @@ period: Q4 2024
 
 # Amazon.com, Inc. — Q4 2024 Earnings Report
 
-> NOTE: This is a synthetic sample document created for the KlypSearch document
+> NOTE: This is a synthetic sample document created for the Klysearch document
 > knowledge base. The figures below are illustrative and do not represent an
 > actual Amazon filing.
 

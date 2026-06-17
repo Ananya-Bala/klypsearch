@@ -7,7 +7,7 @@ period: Q2 FY2025
 
 # Microsoft Corporation — Q2 FY2025 Earnings Report
 
-> NOTE: This is a synthetic sample document created for the KlypSearch document
+> NOTE: This is a synthetic sample document created for the Klysearch document
 > knowledge base. The figures below are illustrative and do not represent an
 > actual Microsoft filing.
 

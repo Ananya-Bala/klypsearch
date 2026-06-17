@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# KlypSearch backend — FastAPI on Python 3.11
+# Klysearch backend — FastAPI on Python 3.11
 # Built for Render's Docker runtime. Render injects $PORT at runtime.
 # ─────────────────────────────────────────────────────────────────────────────
 FROM python:3.11.9-slim

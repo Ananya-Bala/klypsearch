@@ -333,7 +333,7 @@ export default function Signup({ onSignedUp, onGoToLogin }) {
           name: name.trim(),
           email: email.trim(),
           password,
-          organization_name: "KlypSearch",
+          organization_name: "Klysearch",
         }),
       });
 
